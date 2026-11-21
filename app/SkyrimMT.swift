@@ -1272,7 +1272,7 @@ enum UpdateState: Equatable {
 }
 
 final class Updater: ObservableObject {
-    static let repo = "HorrorPills/skyrimmt"
+    static let repo = "kerminator-dev/skyrimmt"
     static let assetName = "SkyrimMT-app.zip"
     @Published var state: UpdateState = .idle
     @Published var latest: ReleaseInfo?
