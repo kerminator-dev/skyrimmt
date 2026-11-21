@@ -868,12 +868,12 @@ final class Launcher: ObservableObject {
     }
 
     func setPreset(_ p: String) {
-        guard p != settings.preset, ["low", "medium", "high", "ultra", "mac"].contains(p) else { return }
+        guard p != settings.preset, ["low", "medium", "high", "ultra"].contains(p) else { return }
         guard !gameRunning else { message = localized("Quit Skyrim first. It rewrites its settings on exit."); return }
         Task.detached {
             let r = shell(["/bin/bash", Paths.script("settings.sh"), "preset", p])
             await MainActor.run {
-                self.message = r.status == 0 ? localizedFormat("%@ settings applied.", localized(p == "mac" ? "Mac Air M4" : p.capitalized)) : r.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.message = r.status == 0 ? localizedFormat("%@ settings applied.", localized(p.capitalized)) : r.output.trimmingCharacters(in: .whitespacesAndNewlines)
                 self.refreshSettings()
             }
         }
@@ -1729,7 +1729,7 @@ struct ContentView: View {
         .ignoresSafeArea(edges: .top)
     }
 
-    private static let presets = ["low", "medium", "high", "ultra", "mac"]
+    private static let presets = ["low", "medium", "high", "ultra"]
 
     private var controllersDetail: String {
         if pads.pads.isEmpty {
@@ -1776,13 +1776,13 @@ struct ContentView: View {
             HStack {
                 RowText(title: "Graphics",
                         detail: launcher.settings.preset == "custom" ? "Your own settings. Picking a preset replaces them."
-                                                                     : "Mac Air M4: detailed grass and trees, lighter shadows, 30 fps. Keeps your render resolution.")
+                                                                     : "Skyrim’s graphics presets. Changes apply at the next launch.")
                 Picker("", selection: Binding(get: { launcher.settings.preset }, set: { launcher.setPreset($0) })) {
                     if launcher.settings.preset == "custom" || launcher.settings.preset == "none" {
                         Text(launcher.settings.preset == "custom" ? "Custom (your settings)" : "Not set yet").tag(launcher.settings.preset)
                         Divider()
                     }
-                    ForEach(Self.presets, id: \.self) { Text($0 == "mac" ? "Mac Air M4 · 30 fps" : $0.capitalized).tag($0) }
+                    ForEach(Self.presets, id: \.self) { Text($0.capitalized).tag($0) }
                 }
                 .labelsHidden().frame(width: 230)
                 .disabled(launcher.gameRunning || launcher.graphicsLauncherOpen || !launcher.skyrimInstalled)

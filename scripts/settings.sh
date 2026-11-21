@@ -24,8 +24,8 @@ skse_dll() { ls "$GAMEDIR"/skse64_1_*.dll 2>/dev/null | head -1; }   # e.g. skse
 preset_now() {   # which Bethesda preset all of SkyrimPrefs' preset keys currently match, else "custom"
   local q f k v cur ok sec
   [ -f "$PREFS" ] || { echo none; return; }
-  for q in Mac Low Medium High Ultra; do
-    f="$GAMEDIR/$q.ini"; [ "$q" = Mac ] && f="$SKYRIMMT_ROOT/config/Mac.ini"; [ -f "$f" ] || continue; ok=1; sec=""
+  for q in Low Medium High Ultra; do
+    f="$GAMEDIR/$q.ini"; [ -f "$f" ] || continue; ok=1; sec=""
     while IFS= read -r line; do
       line=${line%$'\r'}
       case $line in \[*\]) sec=${line#[}; sec=${sec%]}; continue ;; *=*) ;; *) continue ;; esac
@@ -83,8 +83,8 @@ case "${1:-status}" in
     esac ;;
   preset)
     q=$(echo "${2:-}" | tr 'a-z' 'A-Z' | cut -c1)$(echo "${2:-}" | cut -c2- | tr 'A-Z' 'a-z')
-    case "$q" in Low|Medium|High|Ultra|Mac) ;; *) echo "unknown preset"; exit 2 ;; esac
-    f="$GAMEDIR/$q.ini"; [ "$q" = Mac ] && f="$SKYRIMMT_ROOT/config/Mac.ini"
+    case "$q" in Low|Medium|High|Ultra) ;; *) echo "unknown preset"; exit 2 ;; esac
+    f="$GAMEDIR/$q.ini"
     [ -f "$f" ] || { echo "unknown preset ${2:-}"; exit 2; }
     game_running || loader_running && { echo "quit Skyrim and its graphics launcher first"; exit 1; }
     [ -f "$PREFS" ] || { mkdir -p "$MYGAMES_DIR"; cp "$GAMEDIR/Skyrim/SkyrimPrefs.ini" "$PREFS" 2>/dev/null || : > "$PREFS"; }
@@ -95,9 +95,6 @@ case "${1:-status}" in
     [ ! -f "$CUSTOM" ] || cp -p "$CUSTOM" "$backup/SkyrimCustom.ini" || exit 1
     [ ! -f "$SKYRIM_HOME/config/frame-limit" ] || cp -p "$SKYRIM_HOME/config/frame-limit" "$backup/frame-limit" || exit 1
     ini_merge "$PREFS" "$f" || exit 1
-    if [ "$q" = Mac ]; then
-      bash "$SKYRIMMT_ROOT/scripts/settings.sh" pacing 30 || exit 1
-    fi
     echo "$q preset applied (backup: $backup)" ;;
   audio)     # native = Microsoft XAudio2 for SkyrimSE.exe, builtin = Wine's FAudio (applied now and at every Play)
     case ${2:-} in native|builtin) ;; *) echo "usage: settings.sh audio native|builtin"; exit 2 ;; esac

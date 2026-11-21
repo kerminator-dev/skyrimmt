@@ -1,5 +1,18 @@
 # Local offline and display build
 
+Current source includes upstream v1.0.7 (d0b3666583a5f3f0e882cecb0e04892ed01eab0d).
+The Mac Air M4 preset has been removed; the independent FPS controls remain.
+The installed-app paths and gameplay validation below describe the earlier v1.0.6 local build.
+
+## v1.0.7 source validation
+
+- Full Swift app typecheck passed (existing deprecated LaunchServices API warning).
+- Offline Steam: 12 checks passed; graphics launcher: 5 checks passed.
+- Session management: 25 checks passed; Steam language sync: 33 checks passed.
+- Preset fixture: `mac` rejected; standard preset applies with backups and preserves
+  resolution, controller preference and the independent FPS cap.
+- The v1.0.7 source has not been rebuilt into an installed app or tested in gameplay.
+
 Test app: `/Users/nikita/Applications/SkyrimMT Test.app` (v1.0.6-local.8).
 Original app remains at `/Users/nikita/Downloads/SkyrimMT.app`.
 Both use the existing `/Users/nikita/Games/skyrim` environment. Do not run them
@@ -55,24 +68,8 @@ SkyrimPrefs.ini were also backed up in
 
 ## Build notes
 
-Source base: 40f93cd612a6b639ba22de6dfd9aa6a3ecd4cbb5.
+Source base: v1.0.7 (d0b3666583a5f3f0e882cecb0e04892ed01eab0d).
 Build with mingw-w64 on PATH and:
-`SKYRIMMT_VERSION=v1.0.6-local.8 bash app/build.sh --no-install`.
+`SKYRIMMT_VERSION=v1.0.7-local.1 bash app/build.sh --no-install`.
 The locally installed test app retains optional LOOT/benchmark helpers and the
 keychain helper from the user's original release; nothing was published.
-
-## Mac Air M4 preset (local.8)
-
-Game → Graphics → Mac Air M4 · 30 fps applies config/Mac.ini and the 30 fps
-DXMT cap. Tuned for the local M4 Air with 16 GB RAM: High baseline, Ultra's
-7000 grass / 75000 tree distances, TAA and ambient occlusion, 2048 shadows
-at 6000 distance, medium volumetric lighting. Keeps the selected render
-resolution and controller settings. No new vegetation assets or mods.
-Each application backs up preferences, custom INI and any existing frame cap
-under backups/before-preset.TIMESTAMP.PID. Other graphics presets leave the
-independently selected FPS cap unchanged. Graphics detection still reports
-Mac when only the FPS cap changes.
-
-Fixture checks passed for preset recognition, custom detection, 30 fps,
-resolution/controller preservation and backups. Actual sustained temperature,
-power consumption and gameplay frame times have not been measured.
