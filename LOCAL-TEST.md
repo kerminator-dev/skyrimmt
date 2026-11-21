@@ -11,7 +11,10 @@ The installed-app paths and gameplay validation below describe the earlier v1.0.
 - Session management: 25 checks passed; Steam language sync: 33 checks passed.
 - Preset fixture: `mac` rejected; standard preset applies with backups and preserves
   resolution, controller preference and the independent FPS cap.
-- The v1.0.7 source has not been rebuilt into an installed app or tested in gameplay.
+- Release v1.0.7.1 built with `SKYRIMMT_VERSION=v1.0.7.1 bash app/build.sh --no-install`.
+- App passed `codesign --verify --deep --strict`; ZIP integrity, release version,
+  bundled helpers, fork update URL and absence of the removed preset verified.
+- The release app has not been installed or tested in gameplay.
 
 Test app: `/Users/nikita/Applications/SkyrimMT Test.app` (v1.0.6-local.8).
 Original app remains at `/Users/nikita/Downloads/SkyrimMT.app`.
