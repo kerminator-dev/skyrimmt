@@ -29,7 +29,11 @@ if [ -d "$ROOT/tools/bench" ]; then
   cp "$ROOT/tools/bench/bench.sh" "$ROOT/tools/bench/analyze.py" "$ROOT/tools/bench/ini_merge.py" "$RES/skyrimmt/tools/bench/"
   swiftc -O "$ROOT/tools/bench/gamekeys.swift" -o "$RES/skyrimmt/build/tools/gamekeys"
   clang -O2 "$ROOT/tools/bench/displaystate.c" -framework CoreGraphics -framework IOKit -framework CoreFoundation -o "$RES/skyrimmt/build/tools/displaystate"
-else echo "warning: tools/bench missing — Performance benchmark not bundled"; fi
+else
+  echo "warning: tools/bench missing — Performance benchmark not bundled"
+  mkdir -p "$RES/skyrimmt/build/tools"
+  clang -O2 "$ROOT/tools/displaystate.c" -framework CoreGraphics -framework CoreFoundation -o "$RES/skyrimmt/build/tools/displaystate"
+fi
 # frame-time recording proxy (Debug → Record frame times)
 if command -v x86_64-w64-mingw32-gcc >/dev/null || [ -x /opt/homebrew/bin/x86_64-w64-mingw32-gcc ]; then
   mkdir -p "$RES/skyrimmt/build/frametrace"

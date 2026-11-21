@@ -48,7 +48,7 @@ PERP="$SKYRIMMT_ROOT/tools/wine-patches/coreaudio_period.sh"
 ensure_winebus_options   # PlayStation controllers on macOS (see _env.sh)
 ensure_audio_libs        # Microsoft XAudio2 for SkyrimSE.exe: correct sound distances (see _env.sh)
 ensure_shader_compiler   # Microsoft d3dcompiler_47 for SkyrimSE.exe: Community Shaders / ENB compile (see _env.sh)
-ensure_steam || { echo "Steam did not log on — open Steam (scripts/steam.sh --login)"; exit 1; }
+ensure_steam || { echo "Steam is not ready — open Steam and sign in or choose Offline Mode (scripts/steam.sh --login)"; exit 1; }
 follow_session_sync
 
 # per-launch renderer files next to SkyrimSE.exe (removed again when not wanted; only files we put there)
@@ -60,11 +60,21 @@ place() {   # place <src|""> <name>: install src as $GAMEDIR/<name>, or remove o
 ovr="${WINEDLLOVERRIDES:-}"
 case "${SKYRIMMT_RENDERER:-dxmt}" in
   dxmt)
+    limit=$(dxmt_frame_limit)
+    if [ -n "$limit" ]; then
+      export SKYRIMMT_FRAME_LIMIT="$limit"
+      echo "SkyrimMT frame limit: $limit fps" >> "$LOG"
+    fi
     place "" dxgi.dll
-    if [ -n "${SKYRIMMT_FRAMETRACE:-}" ]; then
+    if [ -n "$limit" ] || [ -n "${SKYRIMMT_FRAMETRACE:-}" ] || [ -f "$SKYRIM_HOME/config/stretch-to-screen" ]; then
+      [ -f "$SKYRIMMT_ROOT/build/frametrace/d3d11.dll" ] || { echo "Display helper is missing from this app build"; exit 1; }
+      if [ -f "$GAMEDIR/d3d11.dll" ] && [ ! -f "$SKYRIM_HOME/run/placed-d3d11.dll" ]; then
+        echo "A custom d3d11.dll is installed. Select 60 FPS and disable Stretch to full screen and frame recording to keep using it."; exit 1
+      fi
       place "$SKYRIMMT_ROOT/build/frametrace/d3d11.dll" d3d11.dll
       ovr="$ovr;d3d11=n,b"
-      export FRAMETRACE_OUT="Z:$(echo "$SKYRIMMT_FRAMETRACE" | tr '/' '\\')"
+      [ ! -f "$SKYRIM_HOME/config/stretch-to-screen" ] || export SKYRIMMT_STRETCH=1
+      [ -z "${SKYRIMMT_FRAMETRACE:-}" ] || export FRAMETRACE_OUT="Z:$(echo "$SKYRIMMT_FRAMETRACE" | tr '/' '\\')"
     else place "" d3d11.dll; fi ;;
   dxvk)
     place "$SKYRIM_HOME/wine/share/dxvk/x86_64-windows/d3d11.dll" d3d11.dll
@@ -86,6 +96,10 @@ prefs="$MYGAMES_DIR/SkyrimPrefs.ini"
 wsize=$(cat "$SKYRIM_HOME/config/window-size" 2>/dev/null | tr -d '[:space:]'); wsize=${wsize:-fit}
 if [ -f "$prefs" ] && [ "$wsize" != keep ]; then
   . "$SKYRIMMT_ROOT/scripts/ini.sh"
+  if [ "$wsize" = original ]; then
+    wsize="$(ini_get "$prefs" Display 'iSize W')x$(ini_get "$prefs" Display 'iSize H')"
+    [[ "$wsize" =~ ^[1-9][0-9]*x[1-9][0-9]*$ ]] || wsize=fit
+  fi
   [ "$(ini_get "$prefs" Display bBorderless)" = 1 ] || ini_set "$prefs" Display bBorderless 1
   [ "$(ini_get "$prefs" Display "bFull Screen")" = 0 ] || ini_set "$prefs" Display "bFull Screen" 0
   ds=$("$SKYRIMMT_ROOT/build/tools/displaystate" 2>/dev/null)

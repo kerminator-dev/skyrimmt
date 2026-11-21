@@ -17,6 +17,11 @@ export SKYRIM_STORE
 export GOG_GAMEDIR="$WINEPREFIX/drive_c/GOG Games/Skyrim Anniversary Edition"   # install-gog.sh installs here
 if [ "$SKYRIM_STORE" = gog ]; then export BASE_GAMEDIR="$GOG_GAMEDIR"; else export BASE_GAMEDIR="$STEAM_GAMEDIR"; fi
 is_gog() { [ "$SKYRIM_STORE" = gog ]; }
+dxmt_frame_limit() {
+  local limit
+  limit=$(cat "$SKYRIM_HOME/config/frame-limit" 2>/dev/null)
+  case "$limit" in 30|45) printf '%s\n' "$limit" ;; esac
+}
 # The game folder Play uses: the store's install, or a pinned version from the version switcher (scripts/versions.sh;
 # Steam only). An explicit GAMEDIR from the caller wins (tools that inspect a specific folder).
 _skmt_v=$(cat "$SKYRIM_HOME/config/game-version" 2>/dev/null)
@@ -48,7 +53,8 @@ NTDLL="$SKYRIM_HOME/wine/lib/wine/x86_64-unix/ntdll.so"
 win_pids() {
   local c; c=$(LC_ALL=C pgrep -fil "$1" | RE="$1" LC_ALL=C awk '{ re = ENVIRON["RE"]
       pid = $1; sub(/^[0-9]+ /, ""); i = index(tolower($0), ".exe"); if (!i) next
-      a0 = tolower(substr($0, 1, i + 3)); if (a0 ~ ("(^|\\\\)(" tolower(re) ")$")) print pid }')
+      a0 = tolower(substr($0, 1, i + 3)); n = split(a0, parts, /[\/\\]/)
+      if (parts[n] ~ ("^(" tolower(re) ")$")) print pid }')
   [ -n "$c" ] || return 0
   lsof -t "${2:-$NTDLL}" 2>/dev/null | sort -u | grep -Fx -f <(echo "$c")
 }
@@ -104,15 +110,21 @@ stop_idle_wine() {
 TF2MT_NTDLL="${TF2_HOME:-$HOME/Games/tf2}/wine/lib/wine/x86_64-unix/ntdll.so"
 other_steam_pids() { is_gog && return 0; [ -f "$TF2MT_NTDLL" ] && win_pids 'steam\.exe' "$TF2MT_NTDLL"; }   # GOG: no Steam, no conflict
 
-# Start Steam if needed and wait for a NEW "Logged On" line (old lines from earlier sessions don't count). The game
-# must not start before Steam has logged on (tf2mt: crash during load).
+. "$SKYRIMMT_ROOT/scripts/steam-state.sh"
+# Wait for this session's library, including Steam's authenticated offline mode.
 ensure_steam() {
   is_gog && return 0   # the GOG build starts without any client
-  steam_running && return 0
-  local n; n=$(wc -l < "$STEAM_DIR/logs/connection_log.txt" 2>/dev/null | tr -d ' '); n=${n:-0}
-  "$SKYRIMMT_ROOT/scripts/steam.sh" >/dev/null
-  for _ in $(seq 120); do
-    tail -n +$((n + 1)) "$STEAM_DIR/logs/connection_log.txt" 2>/dev/null | grep -q 'Logged On' && { sleep 8; return 0; }
+  local since pid state attempt
+  since=$(date '+%Y-%m-%d %H:%M:%S')
+  pid=$(win_pids 'steam\.exe' | head -1)
+  if [ -n "$pid" ]; then since=$(steam_process_start "$pid"); fi
+  [ -n "$since" ] || since=$(date '+%Y-%m-%d %H:%M:%S')
+  "$SKYRIMMT_ROOT/scripts/steam.sh" >/dev/null || return 1
+  for attempt in $(seq 120); do
+    state=$(steam_ui_state "$since")
+    case "$state" in online|offline) steam_running && { echo "Steam ready ($state)"; return 0; } ;; esac
+    # Expose login/offline prompts instead of leaving an invisible client waiting.
+    [ "$attempt" = 10 ] && "$SKYRIMMT_ROOT/scripts/steam.sh" --login >/dev/null
     sleep 2
   done
   return 1

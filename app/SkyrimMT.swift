@@ -192,7 +192,7 @@ func shell(_ args: [String], env: [String: String]? = nil) -> (status: Int32, ou
 func keyValues(_ text: String) -> [String: String] {
     var r: [String: String] = [:]
     for line in text.split(separator: "\n") {
-        if line.hasPrefix("steam_pids=") || line.hasPrefix("game_pids=") {
+        if line.hasPrefix("steam_pids=") || line.hasPrefix("game_pids=") || line.hasPrefix("loader_pids=") {
             let p = line.split(separator: "=", maxSplits: 1); r[String(p[0])] = p.count > 1 ? String(p[1]) : ""; continue
         }
         if line.contains("game_pids=") {   // "game=1 game_pids=12 34"
@@ -221,7 +221,10 @@ var displayName: String { NSScreen.main?.localizedName ?? "Display" }
 
 // MARK: - model
 
-enum SteamState { case stopped, starting, online }
+enum SteamState {
+    case stopped, starting, online, offline
+    var ready: Bool { self == .online || self == .offline }
+}
 enum PatchState { case applied, original, unknown }
 
 struct SetupCheck: Identifiable {
@@ -251,6 +254,8 @@ final class Launcher: ObservableObject {
     @Published var steam: SteamState = .stopped
     @Published var gameRunning = false
     @Published var loaderRunning = false
+    @Published var graphicsLauncherOpen = false
+    private var graphicsWindowRaised = false
     @Published var keizaalInstalled = false
     @Published var keizaalRunning = false
     @Published var otherSteam = false          // tf2mt's Steam is running (same account)
@@ -329,6 +334,11 @@ final class Launcher: ObservableObject {
                 self.gameRunning = kv["game"] == "1"
                 if self.gameRunning && !wasRunning { self.gamePIDs = games; self.focusGame() }
                 self.loaderRunning = kv["loader"] == "1"
+                if self.graphicsLauncherOpen && !self.graphicsWindowRaised,
+                   NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier,
+                   let pid = Launcher.windowOwner(among: (kv["loader_pids"] ?? "").split(separator: " ").compactMap { pid_t($0) }) {
+                    self.graphicsWindowRaised = Launcher.bringToFront(pid)
+                }
                 self.keizaalInstalled = exists(Paths.keizaalExe)
                 let keizaal = kv["keizaal"] == "1"
                 if self.keizaalRunning && !keizaal && self.message?.hasPrefix(Launcher.keizaalOpenMessage) == true { self.message = nil }   // closed: back to the initial state
@@ -337,8 +347,9 @@ final class Launcher: ObservableObject {
                 self.deploying = kv["deploy_lock"] == "1"
                 self.steamPIDs = pids; self.gamePIDs = games
                 if Date().timeIntervalSince(self.steamToggled) > 4 { self.steamWindow = shown }
-                self.steam = kv["steam"] == "1" ? (kv["online"] == "1" ? .online : .starting) : .stopped
+                self.steam = kv["steam"] == "1" ? (kv["online"] == "1" ? .online : kv["offline"] == "1" ? .offline : .starting) : .stopped
                 if self.message == localized("Starting Steam…") && self.steam == .online { self.message = localized("Steam is online.") }
+                if self.message == localized("Starting Steam…") && self.steam == .offline { self.message = localized("Steam is ready offline.") }
                 if self.gameRunning { self.launching = false }
             }
         }
@@ -443,6 +454,18 @@ final class Launcher: ObservableObject {
         try? FileManager.default.createDirectory(atPath: Paths.game + "/config", withIntermediateDirectories: true)
         try? (v + "\n").write(toFile: Paths.game + "/config/window-size", atomically: true, encoding: .utf8)
         message = v == "keep" ? "Window size: the profile's own setting." : "Window size applies at the next launch."
+    }
+
+    @Published var stretchToScreen = exists(Paths.game + "/config/stretch-to-screen")
+    func setStretchToScreen(_ on: Bool) {
+        let path = Paths.game + "/config/stretch-to-screen"
+        do {
+            try FileManager.default.createDirectory(atPath: Paths.game + "/config", withIntermediateDirectories: true)
+            if on { try "1\n".write(toFile: path, atomically: true, encoding: .utf8) }
+            else if exists(path) { try FileManager.default.removeItem(atPath: path) }
+            stretchToScreen = on
+            message = "Display settings apply at the next launch."
+        } catch { message = "Could not save display settings: \(error.localizedDescription)" }
     }
 
     /// Start SKSE even when it was built for another game version (config/skse-any-version, read by scripts/skyrim.sh):
@@ -787,6 +810,26 @@ final class Launcher: ObservableObject {
 
     // MARK: settings
 
+    func openGraphicsLauncher() {
+        guard !gameRunning, !loaderRunning, !launching, !graphicsLauncherOpen, !deploying, !setupRunning else { return }
+        guard !otherSteam else { message = localized("Close tf2mt's Steam first (same account)."); return }
+        graphicsLauncherOpen = true
+        graphicsWindowRaised = false
+        message = "Opening Skyrim's original launcher. Choose Options, save with OK, then close it. Use Play here to start Skyrim."
+        Session.ensureHelper()
+        Task.detached {
+            let r = SessionRunner.runSync([Paths.script("graphics-launcher.sh")], env: scriptEnv())
+            await MainActor.run {
+                self.graphicsLauncherOpen = false
+                self.windowSize = (try? String(contentsOfFile: Paths.game + "/config/window-size", encoding: .utf8))?
+                    .trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "fit"
+                self.message = r.status == 0 ? "Graphics settings refreshed. Use Play here to start Skyrim."
+                    : "Could not open graphics settings: \(r.output.trimmingCharacters(in: .whitespacesAndNewlines))"
+                self.refreshSettings(); self.refresh()
+            }
+        }
+    }
+
     func setMouseFix(_ on: Bool) {
         Task.detached {
             let r = shell(["/bin/bash", Paths.mousePatch, on ? "apply" : "revert"], env: scriptEnv())
@@ -825,12 +868,12 @@ final class Launcher: ObservableObject {
     }
 
     func setPreset(_ p: String) {
-        guard p != settings.preset, ["low", "medium", "high", "ultra"].contains(p) else { return }
+        guard p != settings.preset, ["low", "medium", "high", "ultra", "mac"].contains(p) else { return }
         guard !gameRunning else { message = localized("Quit Skyrim first. It rewrites its settings on exit."); return }
         Task.detached {
             let r = shell(["/bin/bash", Paths.script("settings.sh"), "preset", p])
             await MainActor.run {
-                self.message = r.status == 0 ? localizedFormat("%@ settings applied.", localized(p.capitalized)) : r.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.message = r.status == 0 ? localizedFormat("%@ settings applied.", localized(p == "mac" ? "Mac Air M4" : p.capitalized)) : r.output.trimmingCharacters(in: .whitespacesAndNewlines)
                 self.refreshSettings()
             }
         }
@@ -839,6 +882,7 @@ final class Launcher: ObservableObject {
     // MARK: play & control
 
     func play(hud: Bool, frameLog: Bool, skse: Bool, extraArgs: String) {
+        guard !graphicsLauncherOpen, !loaderRunning else { message = "Close Skyrim's original launcher before pressing Play."; return }
         guard !launching, !gameRunning else { return }
         refreshChecks()
         guard readyToPlay else { message = localized("Setup incomplete — see the Setup tab."); return }
@@ -846,7 +890,7 @@ final class Launcher: ObservableObject {
         launching = true
         let mk = ModKit.standard(home: URL(fileURLWithPath: Paths.game))
         Session.ensureHelper()
-        message = isGOG || steam == .online ? "Starting Skyrim…" : "Starting Steam — waiting for login…"
+        message = isGOG || steam.ready ? "Starting Skyrim…" : "Starting Steam — waiting for login…"
         var extra: [String: String] = ["SKYRIMMT_USE_SKSE": skse ? "1" : "0"]
         if hud { extra["SKYRIMMT_METAL_HUD"] = "1" }
         if frameLog {
@@ -1535,7 +1579,7 @@ struct ContentView: View {
                             Button("Quit Skyrim") { launcher.quitSkyrim() }.disabled(!launcher.gameRunning)
                             if launcher.isGOG {
                                 EmptyView()   // the GOG version runs without a client
-                            } else if launcher.steam == .online {
+                            } else if launcher.steam != .stopped {
                                 Button(launcher.steamWindow ? "Hide Steam" : "Show Steam") {
                                     launcher.steamWindow ? launcher.hideSteam() : launcher.showSteam()
                                 }
@@ -1577,7 +1621,10 @@ struct ContentView: View {
             }
             if autoUpdateCheck { updater.startAutomaticChecks() }
             if launcher.checksKnown && !launcher.setupComplete { tabRaw = Tab.setup.rawValue }   // first run: guide through Setup
-            mods.gameRunning = { [weak launcher] in launcher?.gameRunning ?? false }
+            mods.gameRunning = { [weak launcher] in
+                guard let launcher else { return false }
+                return launcher.gameRunning || launcher.loaderRunning || launcher.graphicsLauncherOpen
+            }
             mods.gameVersion = { [weak launcher] in launcher?.settings.shortVersion ?? "" }
         }
     }
@@ -1682,7 +1729,7 @@ struct ContentView: View {
         .ignoresSafeArea(edges: .top)
     }
 
-    private static let presets = ["low", "medium", "high", "ultra"]
+    private static let presets = ["low", "medium", "high", "ultra", "mac"]
 
     private var controllersDetail: String {
         if pads.pads.isEmpty {
@@ -1729,16 +1776,22 @@ struct ContentView: View {
             HStack {
                 RowText(title: "Graphics",
                         detail: launcher.settings.preset == "custom" ? "Your own settings. Picking a preset replaces them."
-                                                                     : "Bethesda's presets. On Apple Silicon even Ultra costs little.")
+                                                                     : "Mac Air M4: detailed grass and trees, lighter shadows, 30 fps. Keeps your render resolution.")
                 Picker("", selection: Binding(get: { launcher.settings.preset }, set: { launcher.setPreset($0) })) {
                     if launcher.settings.preset == "custom" || launcher.settings.preset == "none" {
                         Text(launcher.settings.preset == "custom" ? "Custom (your settings)" : "Not set yet").tag(launcher.settings.preset)
                         Divider()
                     }
-                    ForEach(Self.presets, id: \.self) { Text($0.capitalized).tag($0) }
+                    ForEach(Self.presets, id: \.self) { Text($0 == "mac" ? "Mac Air M4 · 30 fps" : $0.capitalized).tag($0) }
                 }
                 .labelsHidden().frame(width: 230)
-                .disabled(launcher.gameRunning || !launcher.skyrimInstalled)
+                .disabled(launcher.gameRunning || launcher.graphicsLauncherOpen || !launcher.skyrimInstalled)
+            }
+            HStack {
+                RowText(title: "Advanced graphics", detail: "Original Skyrim launcher: Options → Advanced. Save with OK, close it, then press Play here.")
+                Button(launcher.graphicsLauncherOpen ? "Graphics settings open…" : "Open Skyrim launcher…") { launcher.openGraphicsLauncher() }
+                    .buttonStyle(SmallButtonStyle()).frame(width: 230)
+                    .disabled(!launcher.skyrimInstalled || launcher.gameRunning || launcher.loaderRunning || launcher.launching || launcher.graphicsLauncherOpen || launcher.deploying || launcher.setupRunning || launcher.otherSteam)
             }
             Divider().overlay(Color.white.opacity(0.06))
             HStack {
@@ -1747,6 +1800,8 @@ struct ContentView: View {
                             ? "Above 60 fps is safe with SSE Display Tweaks installed."
                             : "Skyrim's physics breaks above 60 fps without SSE Display Tweaks (Mods tab).")
                 Picker("", selection: Binding(get: { launcher.settings.pacing }, set: { launcher.setPacing($0) })) {
+                    Text("30 fps").tag("30")
+                    Text("45 fps").tag("45")
                     Text("60 fps (Skyrim default)").tag("60")
                     Text(localizedFormat("Up to %ld fps", displayRefreshHz)).tag("unlocked")
                         .disabled(!launcher.settings.displayTweaks)
@@ -1756,11 +1811,18 @@ struct ContentView: View {
             Divider().overlay(Color.white.opacity(0.06))
             HStack {
                 let screen = NSScreen.main?.frame.size ?? CGSize(width: 1920, height: 1080)
-                RowText(title: "Window size",
-                        detail: "Borderless window. Applied at every launch, for every profile.")
+                RowText(title: launcher.stretchToScreen ? "Render resolution" : "Window size",
+                        detail: "Screen scale: 25–100% in 5% steps. Applies on the next launch.")
                 Picker("", selection: Binding(get: { launcher.windowSize }, set: { launcher.setWindowSize($0) })) {
-                    Text(localizedFormat("Fit screen (%ld×%ld)", Int(screen.width), Int(screen.height))).tag("fit")
-                    ForEach(["1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"].filter { s in
+                    Text("100% of screen (\(Int(screen.width))×\(Int(screen.height)))").tag("fit")
+                    ForEach(Array(stride(from: 95, through: 25, by: -5)), id: \.self) { percent in
+                        let w = Int(screen.width * Double(percent) / 200) * 2
+                        let h = Int(screen.height * Double(percent) / 200) * 2
+                        Text("\(percent)% of screen (\(w)×\(h))").tag("\(w)x\(h)")
+                    }
+                    Divider()
+                    Text("Resolution from Skyrim launcher").tag("original")
+                    ForEach(["1280x720", "1280x800", "1440x900", "1600x900", "1680x1050", "1920x1080", "1920x1200", "2560x1440", "2560x1600", "3840x2160"].filter { s in
                         let p = s.split(separator: "x").compactMap { Double($0) }
                         return p.count == 2 && p[0] <= screen.width && p[1] <= screen.height && !(p[0] == screen.width && p[1] == screen.height)
                     }, id: \.self) { s in Text(s.replacingOccurrences(of: "x", with: "×")).tag(s) }
@@ -1768,6 +1830,8 @@ struct ContentView: View {
                 }
                 .labelsHidden().frame(width: 230)
             }
+            OptionRow(title: "Stretch to full screen", detail: "DXMT: fill the screen while rendering at the selected resolution. No SKSE required.",
+                      isOn: Binding(get: { launcher.stretchToScreen }, set: { launcher.setStretchToScreen($0) }))
             Divider().overlay(Color.white.opacity(0.06))
             HStack {
                 RowText(title: "Audio mix rate",
@@ -1825,6 +1889,7 @@ struct ContentView: View {
                 }
             }
         }
+        .disabled(launcher.graphicsLauncherOpen || launcher.loaderRunning)
         .onAppear { launcher.refreshSettings(); mods.refreshVersions() }
     }
 
@@ -2007,8 +2072,8 @@ struct ContentView: View {
         Card(title: "Status") {
             if !launcher.isGOG {
                 StatusRow(label: "Steam",
-                          value: launcher.steam == .online ? "Online" : launcher.steam == .starting ? "Logging in…" : "Not running",
-                          color: launcher.steam == .online ? .green : launcher.steam == .starting ? .yellow : .gray)
+                          value: launcher.steam == .online ? "Online" : launcher.steam == .offline ? "Offline — ready" : launcher.steam == .starting ? "Logging in…" : "Not running",
+                          color: launcher.steam.ready ? .green : launcher.steam == .starting ? .yellow : .gray)
             }
             StatusRow(label: "Skyrim",
                       value: launcher.gameRunning ? "Running" : launcher.loaderRunning ? "Starting…" : launchingPlay ? "Launching…" : "Not running",
@@ -2034,7 +2099,7 @@ struct ContentView: View {
 
     /// Keizaal Online installed in this prefix: its launcher (login, updates) starts the game; same preparation as Play.
     private var keizaalButton: some View {
-        let canStart = !launcher.gameRunning && !launcher.launching && launcher.readyToPlay && !launcher.otherSteam
+        let canStart = !launcher.gameRunning && !launcher.launching && !launcher.graphicsLauncherOpen && !launcher.loaderRunning && launcher.readyToPlay && !launcher.otherSteam
         return Button {
             mods.prepareForPlay(status: { launcher.message = $0 }) { launcher.playKeizaal() }
         } label: {
@@ -2051,7 +2116,7 @@ struct ContentView: View {
     }
 
     private var playButton: some View {
-        let canPlay = !launcher.gameRunning && !launcher.launching && launcher.readyToPlay && !launcher.otherSteam
+        let canPlay = !launcher.gameRunning && !launcher.launching && !launcher.graphicsLauncherOpen && !launcher.loaderRunning && launcher.readyToPlay && !launcher.otherSteam
         let big = !launcher.keizaalInstalled
         return Button {
             let (h, f, sk, x) = (metalHUD, frameLog, useSKSE, extraArgs)

@@ -5,21 +5,26 @@
 . "$(dirname "$0")/_env.sh"
 cands=$(LC_ALL=C pgrep -fil 'skyrimse\.exe|skse64_loader\.exe|skyrimselauncher\.exe|steam\.exe|steamwebhelper\.exe|keizaal-online\.exe' | LC_ALL=C awk '{
   pid = $1; sub(/^[0-9]+ /, ""); i = index(tolower($0), ".exe"); if (!i) next
-  a0 = tolower(substr($0, 1, i + 3)); n = split(a0, p, "\\"); print pid, p[n] }')
+  a0 = tolower(substr($0, 1, i + 3)); n = split(a0, p, /[\/\\]/); print pid, p[n] }')
 ours=$( [ -n "$cands" ] && lsof -t "$NTDLL" 2>/dev/null | sort -u)
 theirs=$( [ -n "$cands" ] && [ -f "$TF2MT_NTDLL" ] && lsof -t "$TF2MT_NTDLL" 2>/dev/null | sort -u)
 pick() { echo "$cands" | awk -v names="$1" 'BEGIN { split(names, n, ","); for (i in n) w[n[i]] = 1 } ($2 in w) { print $1 }' | grep -Fx -f <(echo "${2:-none}") ; }
 gp=$(pick skyrimse.exe "$ours" | tr '\n' ' ')
 echo "game=$([ -n "$gp" ] && echo 1 || echo 0) game_pids=$gp"
 echo "loader=$([ -n "$(pick skse64_loader.exe,skyrimselauncher.exe "$ours")" ] && echo 1 || echo 0)"
+echo "loader_pids=$(pick skse64_loader.exe,skyrimselauncher.exe "$ours" | tr '\n' ' ')"
 echo "steam_pids=$(pick steam.exe,steamwebhelper.exe "$ours" | tr '\n' ' ')"
 steam=0; [ -n "$(pick steam.exe "$ours")" ] && steam=1
-online=0
+online=0; offline=0
 if [ $steam = 1 ]; then
-  st=$(tail -400 "$STEAM_DIR/logs/connection_log.txt" 2>/dev/null | grep -oE '\[(Logged On|Logged Off|Logging On)' | tail -1)
-  [ "$st" = "[Logged On" ] && online=1
+  pid=$(pick steam.exe "$ours" | head -1)
+  since=$(steam_process_start "$pid")
+  [ -n "$since" ] || since=$(date '+%Y-%m-%d %H:%M:%S')
+  st=$(steam_ui_state "$since")
+  [ "$st" = online ] && online=1
+  [ "$st" = offline ] && offline=1
 fi
-echo "steam=$steam online=$online"
+echo "steam=$steam online=$online offline=$offline"
 echo "other_steam=$([ -n "$(pick steam.exe "$theirs")" ] && echo 1 || echo 0)"
 echo "store=$SKYRIM_STORE"
 echo "keizaal=$([ -n "$(pick keizaal-online.exe "$ours")" ] && echo 1 || echo 0)"   # Keizaal Online's launcher
